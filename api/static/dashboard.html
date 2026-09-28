@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fleet Operations Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:#0f1117; color:#e6e8ee; margin:0; padding:24px; }
+  h1 { font-size:20px; margin-bottom:4px; }
+  .sub { color:#8b90a0; font-size:13px; margin-bottom:20px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px,1fr)); gap:16px; margin-bottom:24px; }
+  .card { background:#171a22; border:1px solid #262b38; border-radius:10px; padding:16px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:#8b90a0; margin:0 0 10px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid #262b38; }
+  th { color:#8b90a0; font-weight:500; }
+  .badge { padding:2px 8px; border-radius:20px; font-size:11px; }
+  .ok { background:#123d24; color:#3ddc84; }
+  .warn { background:#463012; color:#ffb020; }
+  .crit { background:#4a1420; color:#ff5c5c; }
+  .status-idle { color:#8b90a0; } .status-enroute { color:#ffb020; } .status-on_trip { color:#3ddc84; }
+  canvas { max-height:220px; }
+</style>
+</head>
+<body>
+  <h1>🚗 Fleet Operations Dashboard</h1>
+  <div class="sub">Lambda architecture — speed layer (live) + batch layer (daily reconciliation) · auto-refreshes every 5s</div>
+
+  <div class="grid">
+    <div class="card"><h2>Pipeline Health</h2><div id="health"></div></div>
+    <div class="card"><h2>Active Alerts</h2><div id="alerts"></div></div>
+    <div class="card"><h2>Earnings by Zone (last 15 min)</h2><canvas id="earningsChart"></canvas></div>
+  </div>
+
+  <div class="grid">
+    <div class="card"><h2>Real-Time Fleet Utilization by Zone</h2><div id="utilization"></div></div>
+    <div class="card"><h2>Daily Profitability Report (latest business date)</h2><div id="profitability"></div></div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    let earningsChart;
+
+    async function j(url) { const r = await fetch(url); return r.json(); }
+
+    function badge(text, cls) { return `<span class="badge ${cls}">${text}</span>`; }
+
+    async function refreshHealth() {
+      try {
+        const h = await j('/health');
+        let html = `<div>Overall: ${badge(h.status, h.status==='ok'?'ok':'crit')}</div>`;
+        for (const [name, c] of Object.entries(h.components)) {
+          html += `<div style="margin-top:6px;font-size:12px;">${name}: ${badge(c.fresh ? 'fresh' : 'stale', c.fresh?'ok':'warn')} (${c.age_seconds}s ago)</div>`;
+        }
+        $('health').innerHTML = html;
+      } catch (e) { $('health').innerHTML = badge('unreachable', 'crit'); }
+    }
+
+    async function refreshAlerts() {
+      const a = await j('/api/v1/alerts?active_only=true&limit=8');
+      if (a.count === 0) { $('alerts').innerHTML = '<div style="color:#8b90a0">No active alerts</div>'; return; }
+      $('alerts').innerHTML = a.alerts.map(al =>
+        `<div style="margin-bottom:8px;font-size:12px;">
+           ${badge(al.severity, al.severity==='CRITICAL'?'crit':'warn')}
+           <b>${al.alert_type}</b> — ${al.message}
+         </div>`).join('');
+    }
+
+    async function refreshUtilization() {
+      const u = await j('/api/v1/fleet/utilization?minutes=15');
+      if (!u.zones || u.zones.length === 0) { $('utilization').innerHTML = '<div style="color:#8b90a0">No data yet — waiting for streaming job warm-up</div>'; return; }
+      const f = u.fleet;
+      let html = `<div style="font-size:12px;color:#8b90a0;margin-bottom:8px;">Fleet now: ${f.vehicles} vehicles · ${f.active_vehicles} active · ${f.idle_vehicles} idle (${(f.idle_ratio*100).toFixed(0)}%) · earnings last ${u.window_minutes} min: $${f.earnings.toFixed(2)}</div>`;
+      html += '<table><tr><th>Zone</th><th>Active</th><th>Idle</th><th>Idle Ratio</th><th>Trips/hr</th><th>Earnings (15m)</th></tr>';
+      const labels = [], data = [];
+      for (const z of u.zones) {
+        html += `<tr><td>${z.zone}</td><td>${z.active_vehicles}</td><td>${z.idle_vehicles}</td>
+                  <td>${(z.idle_ratio*100).toFixed(0)}%</td><td>${z.trips_per_hour}</td>
+                  <td>$${z.earnings.toFixed(2)}</td></tr>`;
+        labels.push(z.zone); data.push(z.earnings);
+      }
+      html += '</table>';
+      $('utilization').innerHTML = html;
+
+      if (!earningsChart) {
+        earningsChart = new Chart($('earningsChart'), {
+          type: 'bar',
+          data: { labels, datasets: [{ label: 'Earnings ($)', data, backgroundColor: '#3ddc84' }] },
+          options: { plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#8b90a0' } }, y: { ticks: { color: '#8b90a0' } } } }
+        });
+      } else {
+        earningsChart.data.labels = labels;
+        earningsChart.data.datasets[0].data = data;
+        earningsChart.update();
+      }
+    }
+
+    async function refreshProfitability() {
+      const p = await j('/api/v1/fleet/profitability');
+      if (p.report.length === 0) { $('profitability').innerHTML = '<div style="color:#8b90a0">No reconciliation run yet</div>'; return; }
+      let html = `<div style="font-size:12px;color:#8b90a0;margin-bottom:6px;">Date: ${p.report[0].business_date}</div>`;
+      html += '<table><tr><th>Vehicle</th><th>Trips</th><th>Earnings</th><th>Fuel+Maint</th><th>Net Profit</th></tr>';
+      for (const r of p.report.slice(0, 10)) {
+        const cls = r.is_unprofitable ? 'style="color:#ff5c5c"' : '';
+        html += `<tr ${cls}><td>${r.vehicle_id}</td><td>${r.total_trips}</td><td>$${r.total_earnings.toFixed(2)}</td>
+                  <td>$${(r.fuel_cost+r.maintenance_cost).toFixed(2)}</td><td>$${r.net_profit.toFixed(2)}</td></tr>`;
+      }
+      html += '</table>';
+      $('profitability').innerHTML = html;
+    }
+
+    async function refreshAll() {
+      await Promise.all([refreshHealth(), refreshAlerts(), refreshUtilization(), refreshProfitability()]);
+    }
+    refreshAll();
+    setInterval(refreshAll, 5000);
+  </script>
+</body>
+</html>

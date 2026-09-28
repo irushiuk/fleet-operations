@@ -1,0 +1,9 @@
+data/batch_incoming/*
+data/parquet_archive/*
+data/checkpoints/*
+!data/batch_incoming/.gitkeep
+!data/parquet_archive/.gitkeep
+!data/checkpoints/.gitkeep
+__pycache__/
+*.pyc
+.DS_Store
