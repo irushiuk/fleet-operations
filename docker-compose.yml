@@ -122,6 +122,7 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://fleet:fleetpass@postgres:5432/fleetdb
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
     ports:
       - "8080:8080"
     volumes:
@@ -131,6 +132,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  airflow-unpause:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    command: ["bash", "-c", "until airflow dags list | grep -q daily_fleet_reconciliation; do sleep 10; done; airflow dags unpause daily_fleet_reconciliation"]
+    environment:
+      <<: *common-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://fleet:fleetpass@postgres:5432/fleetdb
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+    depends_on:
+      airflow:
+        condition: service_started
 
   # ------------------------------------------------------------- Serving
   api:

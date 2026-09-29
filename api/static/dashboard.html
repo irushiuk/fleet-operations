@@ -1,119 +1,130 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Fleet Operations Dashboard</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
-  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:#0f1117; color:#e6e8ee; margin:0; padding:24px; }
-  h1 { font-size:20px; margin-bottom:4px; }
-  .sub { color:#8b90a0; font-size:13px; margin-bottom:20px; }
-  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px,1fr)); gap:16px; margin-bottom:24px; }
-  .card { background:#171a22; border:1px solid #262b38; border-radius:10px; padding:16px; }
-  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:#8b90a0; margin:0 0 10px; }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid #262b38; }
-  th { color:#8b90a0; font-weight:500; }
-  .badge { padding:2px 8px; border-radius:20px; font-size:11px; }
-  .ok { background:#123d24; color:#3ddc84; }
-  .warn { background:#463012; color:#ffb020; }
-  .crit { background:#4a1420; color:#ff5c5c; }
-  .status-idle { color:#8b90a0; } .status-enroute { color:#ffb020; } .status-on_trip { color:#3ddc84; }
-  canvas { max-height:220px; }
+  :root { color-scheme:dark; --bg:#0b1018; --panel:#151d29; --line:#2a394b; --text:#edf3fa; --muted:#a8b7c8; --green:#57d9a0; --amber:#ffc36b; --red:#ff8290; }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }
+  main { max-width:1500px; margin:auto; padding:28px 24px 48px; } header { display:flex; justify-content:space-between; gap:20px; margin-bottom:24px; }
+  h1 { font-size:clamp(25px,3vw,34px); line-height:1.15; letter-spacing:-.035em; margin:0 0 8px; } h2 { font-size:16px; margin:0; }
+  .eyebrow { color:#82bbff; text-transform:uppercase; letter-spacing:.14em; font-size:11px; font-weight:700; margin:0 0 8px; }
+  .subtitle,.caption,.small { color:var(--muted); } .subtitle { margin:0; max-width:750px; } .caption,.small { font-size:12px; }
+  .updated { text-align:right; white-space:nowrap; font-size:12px; color:var(--muted); padding-top:8px; } .updated strong { display:block; color:var(--text); font-size:13px; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--green); margin-right:7px; }
+  .summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:18px; }
+  .panel,.stat { background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 12px 30px #0002; }
+  .stat { padding:17px 20px; min-height:112px; } .stat-label { color:var(--muted); font-size:12px; font-weight:650; }
+  .stat-value { font-size:clamp(23px,2.5vw,32px); font-weight:750; letter-spacing:-.04em; line-height:1.2; margin:10px 0 3px; font-variant-numeric:tabular-nums; }
+  .stat-note { color:var(--muted); font-size:11px; } .layout { display:grid; grid-template-columns:minmax(0,1.45fr) minmax(340px,1fr); gap:18px; }
+  .stack { display:grid; gap:18px; align-content:start; } .panel { padding:20px; min-width:0; }
+  .panel-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:16px; }
+  .chart-wrap { min-height:210px; } .table-wrap { overflow:auto; max-height:470px; }
+  .bar-chart { display:grid; gap:17px; padding:10px 0; } .bar-row { display:grid; grid-template-columns:95px minmax(0,1fr) 80px; align-items:center; gap:10px; font-size:12px; }
+  .bar-label { color:var(--muted); overflow:hidden; text-overflow:ellipsis; } .bar-track { height:18px; background:#243244; border-radius:5px; overflow:hidden; }
+  .bar-fill { display:block; height:100%; background:var(--green); border-radius:5px; min-width:2px; } .bar-value { text-align:right; font-variant-numeric:tabular-nums; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; white-space:nowrap; } th,td { padding:10px 11px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-size:11px; text-align:left; background:var(--panel); position:sticky; top:0; z-index:1; }
+  th.num,td.num { text-align:right; } td { font-variant-numeric:tabular-nums; } tbody tr:hover { background:#1a2533; }
+  .zone { font-weight:650; } .negative { color:var(--red); font-weight:650; } .positive { color:var(--green); font-weight:650; }
+  .badge { display:inline-flex; border-radius:999px; padding:3px 9px; font-size:11px; font-weight:700; white-space:nowrap; }
+  .ok { color:var(--green); background:#15382f; } .warn { color:var(--amber); background:#443519; } .crit { color:var(--red); background:#49232b; }
+  .health-row { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:10px 0; border-top:1px solid var(--line); }
+  .health-row:first-child,.alert:first-child { border-top:0; padding-top:0; } .health-name { font-weight:600; overflow-wrap:anywhere; }
+  .alert-list { max-height:310px; overflow:auto; } .alert { border-top:1px solid var(--line); padding:10px 0; }
+  .alert-title { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:3px; } .alert-message { color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+  .empty { color:var(--muted); padding:16px 0; } .error { color:var(--red); } .meta { color:var(--muted); font-size:12px; margin:-5px 0 13px; }
+  @media(max-width:1050px) { .summary { grid-template-columns:repeat(2,minmax(0,1fr)); } .layout { grid-template-columns:1fr; } }
+  @media(max-width:600px) { main { padding:20px 14px 36px; } header { display:block; } .updated { text-align:left; padding-top:12px; } .summary { gap:9px; } .stat { padding:14px; min-height:105px; } .panel { padding:16px; } .panel-head { display:block; } }
 </style>
 </head>
-<body>
-  <h1>🚗 Fleet Operations Dashboard</h1>
-  <div class="sub">batch layer (daily reconciliation) · auto-refreshes every 5s</div>
-
-  <div class="grid">
-    <div class="card"><h2>Pipeline Health</h2><div id="health"></div></div>
-    <div class="card"><h2>Active Alerts</h2><div id="alerts"></div></div>
-    <div class="card"><h2>Earnings by Zone (last 15 min)</h2><canvas id="earningsChart"></canvas></div>
-  </div>
-
-  <div class="grid">
-    <div class="card"><h2>Real-Time Fleet Utilization by Zone</h2><div id="utilization"></div></div>
-    <div class="card"><h2>Daily Profitability Report (latest business date)</h2><div id="profitability"></div></div>
-  </div>
-
-  <script>
-    const $ = id => document.getElementById(id);
-    let earningsChart;
-
-    async function j(url) { const r = await fetch(url); return r.json(); }
-
-    function badge(text, cls) { return `<span class="badge ${cls}">${text}</span>`; }
-
-    async function refreshHealth() {
-      try {
-        const h = await j('/health');
-        let html = `<div>Overall: ${badge(h.status, h.status==='ok'?'ok':'crit')}</div>`;
-        for (const [name, c] of Object.entries(h.components)) {
-          html += `<div style="margin-top:6px;font-size:12px;">${name}: ${badge(c.fresh ? 'fresh' : 'stale', c.fresh?'ok':'warn')} (${c.age_seconds}s ago)</div>`;
-        }
-        $('health').innerHTML = html;
-      } catch (e) { $('health').innerHTML = badge('unreachable', 'crit'); }
+<body><main>
+  <header><div><p class="eyebrow">Fleet operations · simulated data</p><h1>Fleet overview</h1>
+    <p class="subtitle">Live vehicle status and earnings, reconciled with fuel and maintenance costs. One simulated day equals five real minutes.</p></div>
+    <div class="updated" aria-live="polite"><strong><span class="dot"></span>Auto-refresh every 5 seconds</strong><span id="lastUpdated">Waiting for data</span></div></header>
+  <section class="summary" aria-label="Fleet summary">
+    <div class="stat"><div class="stat-label">Active vehicles</div><div class="stat-value" id="statActive">—</div><div class="stat-note" id="statFleet">Current fleet snapshot</div></div>
+    <div class="stat"><div class="stat-label">Idle vehicles</div><div class="stat-value" id="statIdle">—</div><div class="stat-note" id="statIdleRatio">Current fleet snapshot</div></div>
+    <div class="stat"><div class="stat-label">Earnings</div><div class="stat-value" id="statEarnings">—</div><div class="stat-note">Last simulated day</div></div>
+    <div class="stat"><div class="stat-label">Unprofitable vehicles</div><div class="stat-value" id="statUnprofitable">—</div><div class="stat-note" id="statBusinessDate">Latest reconciliation</div></div>
+  </section>
+  <div class="layout"><div class="stack">
+    <section class="panel"><div class="panel-head"><h2>Fleet activity by zone</h2><span class="caption">Current status · earnings over last simulated day</span></div>
+      <div class="table-wrap" id="utilization"><div class="empty">Waiting for streaming data…</div></div></section>
+    <section class="panel"><div class="panel-head"><h2>Vehicle profitability</h2><span class="caption" id="profitCaption">Latest simulated business date</span></div>
+      <div class="meta" id="profitSummary"></div><div class="table-wrap" id="profitability"><div class="empty">Waiting for reconciliation…</div></div></section>
+  </div><div class="stack">
+    <section class="panel"><div class="panel-head"><h2>Earnings by zone</h2><span class="caption">Last simulated day</span></div><div class="chart-wrap" id="earningsChart" role="img" aria-label="Bar chart of simulated earnings by zone"><div class="empty">Waiting for earnings…</div></div></section>
+    <section class="panel"><div class="panel-head"><h2>Pipeline health</h2><span id="overallHealth" class="badge warn">Checking</span></div><div id="health"><div class="empty">Waiting for heartbeats…</div></div></section>
+    <section class="panel"><div class="panel-head"><h2>Active alerts</h2><span class="caption" id="alertCount"></span></div><div class="alert-list" id="alerts"><div class="empty">Loading alerts…</div></div></section>
+  </div></div>
+</main><script>
+  const $ = id => document.getElementById(id);
+  const money = n => {
+    const value = Number(n || 0);
+    return (value < 0 ? '-' : '') + '$' +
+      Math.abs(value).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+  };  
+  const esc = v => String(v ?? '').replace(/[&<>"']/g,c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const badge = (text,cls) => `<span class="badge ${cls}">${esc(text)}</span>`;
+  let refreshing=false;
+  async function json(url) { const r=await fetch(url,{cache:'no-store'}); if(!r.ok) throw Error(`HTTP ${r.status}`); return r.json(); }
+  function health(h) {
+    const overall=$('overallHealth'); overall.className='badge '+(h.status==='ok'?'ok':'crit'); overall.textContent=h.status;
+    const entries=Object.entries(h.components||{});
+    $('health').innerHTML=entries.length ? entries.map(([name,c])=>`<div class="health-row"><div><div class="health-name">${esc(name)}</div>
+      <div class="small">${c.age_seconds==null?'No heartbeat received':`${Number(c.age_seconds).toFixed(0)} seconds since last heartbeat`}</div></div>
+      ${badge(c.fresh?'Fresh':'Stale',c.fresh?'ok':'crit')}</div>`).join('') : '<div class="empty">No components have reported yet.</div>';
+  }
+  function alerts(a) {
+    const unique=new Map();
+    for(const item of a.alerts||[]) {
+      const day=/on (\d{4}-\d{2}-\d{2})/.exec(item.message||'')?.[1]||'';
+      const key=`${item.alert_type}:${item.subject_id}:${day}`;
+      if(!unique.has(key)) unique.set(key,item);
     }
-
-    async function refreshAlerts() {
-      const a = await j('/api/v1/alerts?active_only=true&limit=8');
-      if (a.count === 0) { $('alerts').innerHTML = '<div style="color:#8b90a0">No active alerts</div>'; return; }
-      $('alerts').innerHTML = a.alerts.map(al =>
-        `<div style="margin-bottom:8px;font-size:12px;">
-           ${badge(al.severity, al.severity==='CRITICAL'?'crit':'warn')}
-           <b>${al.alert_type}</b> — ${al.message}
-         </div>`).join('');
-    }
-
-    async function refreshUtilization() {
-      const u = await j('/api/v1/fleet/utilization?minutes=15');
-      if (!u.zones || u.zones.length === 0) { $('utilization').innerHTML = '<div style="color:#8b90a0">No data yet — waiting for streaming job warm-up</div>'; return; }
-      const f = u.fleet;
-      let html = `<div style="font-size:12px;color:#8b90a0;margin-bottom:8px;">Fleet now: ${f.vehicles} vehicles · ${f.active_vehicles} active · ${f.idle_vehicles} idle (${(f.idle_ratio*100).toFixed(0)}%) · earnings last ${u.window_minutes} min: $${f.earnings.toFixed(2)}</div>`;
-      html += '<table><tr><th>Zone</th><th>Active</th><th>Idle</th><th>Idle Ratio</th><th>Trips/hr</th><th>Earnings (15m)</th></tr>';
-      const labels = [], data = [];
-      for (const z of u.zones) {
-        html += `<tr><td>${z.zone}</td><td>${z.active_vehicles}</td><td>${z.idle_vehicles}</td>
-                  <td>${(z.idle_ratio*100).toFixed(0)}%</td><td>${z.trips_per_hour}</td>
-                  <td>$${z.earnings.toFixed(2)}</td></tr>`;
-        labels.push(z.zone); data.push(z.earnings);
-      }
-      html += '</table>';
-      $('utilization').innerHTML = html;
-
-      if (!earningsChart) {
-        earningsChart = new Chart($('earningsChart'), {
-          type: 'bar',
-          data: { labels, datasets: [{ label: 'Earnings ($)', data, backgroundColor: '#3ddc84' }] },
-          options: { plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#8b90a0' } }, y: { ticks: { color: '#8b90a0' } } } }
-        });
-      } else {
-        earningsChart.data.labels = labels;
-        earningsChart.data.datasets[0].data = data;
-        earningsChart.update();
-      }
-    }
-
-    async function refreshProfitability() {
-      const p = await j('/api/v1/fleet/profitability');
-      if (p.report.length === 0) { $('profitability').innerHTML = '<div style="color:#8b90a0">No reconciliation run yet</div>'; return; }
-      let html = `<div style="font-size:12px;color:#8b90a0;margin-bottom:6px;">Date: ${p.report[0].business_date}</div>`;
-      html += '<table><tr><th>Vehicle</th><th>Trips</th><th>Earnings</th><th>Fuel+Maint</th><th>Net Profit</th></tr>';
-      for (const r of p.report.slice(0, 10)) {
-        const cls = r.is_unprofitable ? 'style="color:#ff5c5c"' : '';
-        html += `<tr ${cls}><td>${r.vehicle_id}</td><td>${r.total_trips}</td><td>$${r.total_earnings.toFixed(2)}</td>
-                  <td>$${(r.fuel_cost+r.maintenance_cost).toFixed(2)}</td><td>$${r.net_profit.toFixed(2)}</td></tr>`;
-      }
-      html += '</table>';
-      $('profitability').innerHTML = html;
-    }
-
-    async function refreshAll() {
-      await Promise.all([refreshHealth(), refreshAlerts(), refreshUtilization(), refreshProfitability()]);
-    }
-    refreshAll();
-    setInterval(refreshAll, 5000);
-  </script>
-</body>
-</html>
+    const rows=[...unique.values()]; $('alertCount').textContent=rows.length?`${rows.length} distinct warnings`:'';
+    $('alerts').innerHTML=rows.length?rows.map(a=>`<div class="alert"><div class="alert-title">${badge(a.severity,a.severity==='CRITICAL'?'crit':'warn')}
+      <strong>${esc(a.alert_type)}</strong></div><div class="alert-message">${esc(a.message)}</div></div>`).join(''):'<div class="empty">No active alerts.</div>';
+  }
+  function utilization(u) {
+    const f=u.fleet||{}, zones=u.zones||[];
+    $('statActive').textContent=f.active_vehicles??'—'; $('statIdle').textContent=f.idle_vehicles??'—';
+    $('statFleet').textContent=`of ${f.vehicles??0} vehicles currently reporting`;
+    $('statIdleRatio').textContent=`${Math.round(Number(f.idle_ratio||0)*100)}% of reporting fleet`;
+    $('statEarnings').textContent=money(f.earnings);
+    $('utilization').innerHTML=zones.length?`<table><thead><tr><th>Zone</th><th class="num">Active</th><th class="num">Idle</th><th class="num">Idle ratio</th><th class="num">Trips / sim hr</th><th class="num">Earnings</th></tr></thead><tbody>${zones.map(z=>`
+      <tr><td class="zone">${esc(z.zone)}</td><td class="num">${z.active_vehicles}</td><td class="num">${z.idle_vehicles}</td>
+      <td class="num">${Math.round(Number(z.idle_ratio)*100)}%</td><td class="num">${Number(z.trips_per_simulated_hour).toFixed(1)}</td><td class="num">${money(z.earnings)}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">No recent vehicle events yet.</div>';
+    const max=Math.max(1,...zones.map(z=>Number(z.earnings)));
+    $('earningsChart').innerHTML=zones.length?`<div class="bar-chart">${zones.map(z=>`
+      <div class="bar-row"><span class="bar-label">${esc(z.zone)}</span><span class="bar-track"><span class="bar-fill" style="width:${Math.max(0,Math.min(100,Number(z.earnings)/max*100))}%"></span></span>
+      <span class="bar-value">${money(z.earnings)}</span></div>`).join('')}</div>`:'<div class="empty">No earnings yet.</div>';
+  }
+  function profitability(p) {
+    const rows=p.report||[];
+    if(!rows.length) { $('profitability').innerHTML='<div class="empty">No completed reconciliation yet.</div>'; $('profitSummary').textContent=''; $('statUnprofitable').textContent='—'; return; }
+    const bad=rows.filter(r=>r.is_unprofitable).length, date=rows[0].business_date;
+    $('statUnprofitable').textContent=bad; $('statBusinessDate').textContent=`of ${rows.length} vehicles · simulated ${date}`;
+    $('profitCaption').textContent=`Simulated business date ${date}`;
+    $('profitSummary').textContent=`Showing all ${rows.length} vehicles, sorted by net profit · ${bad} below zero`;
+    $('profitability').innerHTML=`<table><thead><tr><th>Vehicle</th><th class="num">Trips</th><th class="num">Earnings</th><th class="num">Fuel + maintenance</th><th class="num">Net profit</th></tr></thead><tbody>${rows.map(r=>`
+      <tr><td class="zone">${esc(r.vehicle_id)}</td><td class="num">${r.total_trips}</td><td class="num">${money(r.total_earnings)}</td>
+      <td class="num">${money(Number(r.fuel_cost)+Number(r.maintenance_cost))}</td><td class="num ${r.net_profit<0?'negative':'positive'}">${money(r.net_profit)}</td></tr>`).join('')}</tbody></table>`;
+  }
+  async function refresh() {
+    if(refreshing) return; refreshing=true;
+    const jobs=[['health','/health',health],['alerts','/api/v1/alerts?active_only=true&limit=100',alerts],
+      ['utilization','/api/v1/fleet/utilization?minutes=5',utilization],['profitability','/api/v1/fleet/profitability',profitability]];
+    const results=await Promise.allSettled(jobs.map(async ([,url,render])=>render(await json(url))));
+    results.forEach((result,i)=>{ if(result.status==='rejected') {
+      if(jobs[i][0]==='health') { $('overallHealth').className='badge crit'; $('overallHealth').textContent='Unavailable'; }
+      $(jobs[i][0]).innerHTML='<div class="empty error">Could not load this section. Retrying automatically.</div>';
+    }});
+    $('lastUpdated').textContent=`Updated ${new Date().toLocaleTimeString()}`; refreshing=false;
+  }
+  refresh(); setInterval(refresh,5000);
+</script></body></html>

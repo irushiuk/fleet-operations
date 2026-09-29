@@ -16,7 +16,8 @@ import csv
 import os
 import random
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+import glob
 
 import sys
 sys.path.append("/app")
@@ -30,7 +31,7 @@ SIMULATED_DAY_SECONDS = float(os.environ.get("SIMULATED_DAY_SECONDS", "300"))
 START_DATE_ENV = os.environ.get("START_DATE")  # YYYY-MM-DD, optional
 
 
-def make_daily_file(business_date: date):
+def make_daily_file(business_date: date, period_start: datetime, period_end: datetime):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     path = os.path.join(OUTPUT_DIR, f"vehicle_costs_{business_date.isoformat()}.csv")
     rows = []
@@ -47,12 +48,15 @@ def make_daily_file(business_date: date):
             "maintenance_cost": maintenance_cost,
             "distance_covered": distance,
             "service_flag": service_flag,
+            "period_start_utc": period_start.isoformat(),
+            "period_end_utc": period_end.isoformat(),
         })
 
     tmp_path = path + ".tmp"
     with open(tmp_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["vehicle_id", "fuel_cost", "maintenance_cost",
-                                                 "distance_covered", "service_flag"])
+                                                 "distance_covered", "service_flag",
+                                                 "period_start_utc", "period_end_utc"])
         writer.writeheader()
         writer.writerows(rows)
     os.rename(tmp_path, path)  # atomic rename so Airflow never sees a half-written file
@@ -62,14 +66,21 @@ def make_daily_file(business_date: date):
 def main():
     logger.info(f"Starting batch producer: 1 simulated day = {SIMULATED_DAY_SECONDS}s, "
                 f"writing to {OUTPUT_DIR}")
-    business_date = date.fromisoformat(START_DATE_ENV) if START_DATE_ENV else date.today()
+    existing = glob.glob(os.path.join(OUTPUT_DIR, "vehicle_costs_*.csv"))
+    latest_date = max((date.fromisoformat(os.path.basename(path)[14:24]) for path in existing),
+                      default=None)
+    business_date = (date.fromisoformat(START_DATE_ENV) if START_DATE_ENV else
+                     latest_date + timedelta(days=1) if latest_date else date.today())
+    period_start = datetime.now(timezone.utc)
 
     while True:
-        path, n = make_daily_file(business_date)
+        time.sleep(SIMULATED_DAY_SECONDS)
+        period_end = datetime.now(timezone.utc)
+        path, n = make_daily_file(business_date, period_start, period_end)
         log_with_fields(logger, "info", "daily_file_dropped",
                          business_date=business_date.isoformat(), rows=n, path=path)
         business_date += timedelta(days=1)
-        time.sleep(SIMULATED_DAY_SECONDS)
+        period_start = period_end
 
 
 if __name__ == "__main__":

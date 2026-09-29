@@ -63,7 +63,7 @@ class Vehicle:
         self.status = "idle"
         self.trip_id = None
 
-    def _event(self, speed, fare):
+    def _event(self, speed, fare, trip_started=False):
         return {
             "trip_id": self.trip_id,
             "driver_id": self.driver_id,
@@ -74,6 +74,7 @@ class Vehicle:
             "speed": round(speed, 1),
             "status": self.status,
             "fare": fare,
+            "trip_started": trip_started,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -94,7 +95,8 @@ class Vehicle:
         probs = TRANSITIONS[self.status]
         self.status = random.choices(list(probs.keys()), weights=list(probs.values()))[0]
 
-        if self.status == "enroute" and prev_status != "enroute":
+        trip_started = self.status == "enroute" and prev_status != "enroute"
+        if trip_started:
             self.trip_id = f"trip_{uuid.uuid4().hex[:10]}"
         if self.status == "idle":
             self.trip_id = None
@@ -110,18 +112,7 @@ class Vehicle:
         elif self.status == "idle" and random.random() < 0.1:
             speed = random.uniform(0, 5)
 
-        return {
-            "trip_id": self.trip_id,
-            "driver_id": self.driver_id,
-            "vehicle_id": self.vehicle_id,
-            "zone": self.zone,
-            "lat": round(self.lat, 6),
-            "lon": round(self.lon, 6),
-            "speed": round(speed, 1),
-            "status": self.status,
-            "fare": fare,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        return self._event(speed, fare, trip_started)
 
 
 def build_producer() -> KafkaProducer:

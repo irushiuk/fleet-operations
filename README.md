@@ -29,14 +29,22 @@ Kafka/Postgres connectors. Wait until the logs show `Streaming query started`.
 | Airflow UI | http://localhost:8080 |
 
 Expected timeline: live zone metrics appear after ~2 minutes; idle-vehicle
-alerts after ~3 minutes; the first daily reconciliation after ~5 minutes
-(1 simulated day = 5 real minutes).
+alerts after ~3 minutes; the first cost file is created after ~5 minutes
+(1 simulated day = 5 real minutes). Airflow then processes that file on its
+next scheduled run, so the first profitability report may take longer.
+The dashboard shows earnings over one simulated day and trips per simulated hour.
 
-### 3. Enable the batch layer (Airflow)
+### 3. Inspect the batch layer (Airflow)
 1. Get the Airflow password: `docker compose logs airflow | grep -i password`
 2. Log in at http://localhost:8080 with username `admin`.
-3. Switch on the `daily_fleet_reconciliation` DAG (DAGs start paused).
-   The profitability report on the dashboard fills after its first run.
+3. Check that `daily_fleet_reconciliation` is active. The `airflow-unpause`
+   setup service enables it automatically, including for an existing metadata
+   database. Confirm `reconcile_and_load` succeeds before using the report.
+
+Each new cost CSV includes the UTC start and end of its simulated day. Airflow
+uses those fixed bounds when rerunning a file; old CSV files without these
+columns use the file modification time as a compatibility fallback. The
+business date is simulated and can advance faster than the real calendar.
 
 ### 4. Useful commands
 
@@ -47,6 +55,13 @@ docker compose up -d --build <service>         # rebuild and restart one service
 docker compose down                            # stop everything (keeps data)
 docker compose down -v                         # stop and delete all data (fresh start)
 ```
+
+When upgrading from an older run, restart the producer and Spark services so
+the new `trip_started` field is emitted and parsed. Previously stored metrics
+and alerts remain in PostgreSQL until you intentionally reset the data. Use
+`docker compose down -v` only if you want to discard the old database and
+Kafka data; the bind-mounted CSV, Parquet and checkpoint directories are
+separate and must be cleared separately for a completely fresh demonstration.
 
 ### 5. Demo the health alert
 ```bash

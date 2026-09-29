@@ -30,7 +30,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.sensors.filesystem import FileSensor
+from airflow.sensors.python import PythonSensor
 
 import sys
 sys.path.append("/opt/airflow")
@@ -60,11 +60,17 @@ def _business_date_for_run(execution_date) -> str:
     return execution_date.strftime("%Y-%m-%d")
 
 
+def recent_cost_file_available():
+    files = glob.glob(os.path.join(BATCH_INCOMING_DIR, "vehicle_costs_*.csv"))
+    return any(datetime.now().timestamp() - os.path.getmtime(path) <= 2 * SIMULATED_DAY_SECONDS
+               for path in files)
+
+
 def find_latest_cost_file(**context):
     files = sorted(glob.glob(os.path.join(BATCH_INCOMING_DIR, "vehicle_costs_*.csv")))
     if not files:
         raise FileNotFoundError("No vehicle_costs_*.csv files found yet")
-    latest = files[-1]
+    latest = max(files, key=os.path.getmtime)
     business_date = os.path.basename(latest).replace("vehicle_costs_", "").replace(".csv", "")
     context["ti"].xcom_push(key="cost_file_path", value=latest)
     context["ti"].xcom_push(key="business_date", value=business_date)
@@ -80,23 +86,35 @@ def reconcile_and_load(**context):
 
     costs = pd.read_csv(cost_file_path)
     costs["vehicle_id"] = costs["vehicle_id"].astype(str)
+    if costs.empty or costs["vehicle_id"].duplicated().any():
+        raise ValueError("Cost file must contain one row per vehicle")
+    if {"period_start_utc", "period_end_utc"}.issubset(costs.columns):
+        period_start = pd.to_datetime(costs["period_start_utc"].iloc[0], utc=True)
+        period_end = pd.to_datetime(costs["period_end_utc"].iloc[0], utc=True)
+        if (period_end <= period_start or
+                costs["period_start_utc"].nunique() != 1 or
+                costs["period_end_utc"].nunique() != 1):
+            raise ValueError("Invalid or inconsistent cost file event interval")
+    else:
+        # Compatibility with cost files created before explicit intervals were added.
+        period_end = pd.Timestamp(os.path.getmtime(cost_file_path), unit="s", tz="UTC")
+        period_start = period_end - pd.Timedelta(seconds=SIMULATED_DAY_SECONDS)
 
     # Re-derive trip aggregates for that day directly from the Parquet
     # archive (the immutable event log) -- this is the batch layer doing
     # its own independent recomputation, per Lambda architecture.
     trip_agg = pd.DataFrame(columns=["vehicle_id", "total_trips", "total_earnings"])
-    # SIMULATED-CLOCK NOTE: one simulated day == SIMULATED_DAY_SECONDS of real
-    # time, so "that day's trips" = archived events from the last
-    # SIMULATED_DAY_SECONDS of wall-clock time (NOT events whose real calendar
-    # date equals the cost file's simulated business_date, which advances
-    # faster than real dates and would never match).
+    # A cost file carries its fixed event interval. A rerun must use that same
+    # interval, regardless of when Airflow executes it.
     parquet_files = glob.glob(os.path.join(PARQUET_ARCHIVE_PATH, "archive_date=*", "*.parquet"))
     if parquet_files:
         frames = [pd.read_parquet(f) for f in parquet_files]
         events = pd.concat(frames, ignore_index=True)
         events["event_time"] = pd.to_datetime(events["event_time"], utc=True)
-        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=SIMULATED_DAY_SECONDS)
-        events = events[events["event_time"] >= cutoff]
+        events = events[(events["event_time"] >= period_start) &
+                        (events["event_time"] < period_end)]
+        if events.empty:
+            raise RuntimeError(f"No archived events for {business_date} in its cost interval")
         on_trip = events[events["status"] == "on_trip"].copy()
         trip_agg = (
             on_trip.groupby("vehicle_id")
@@ -104,7 +122,7 @@ def reconcile_and_load(**context):
             .reset_index()
         )
     else:
-        log_with_fields(logger, "warning", "no_parquet_archive_for_date", business_date=business_date)
+        raise RuntimeError(f"No Parquet archive available for {business_date}")
 
     merged = costs.merge(trip_agg, on="vehicle_id", how="left")
     merged["total_trips"] = merged["total_trips"].fillna(0).astype(int)
@@ -118,6 +136,9 @@ def reconcile_and_load(**context):
 
     conn = psycopg2.connect(**PG_CONN)
     cur = conn.cursor()
+    cur.execute("""UPDATE alerts SET resolved = true
+                   WHERE alert_type = 'UNPROFITABLE_VEHICLE' AND resolved = false
+                     AND message NOT LIKE %s""", (f"%on {business_date}:%",))
     for _, r in merged.iterrows():
         cur.execute("""
             INSERT INTO vehicle_profitability_report
@@ -140,10 +161,19 @@ def reconcile_and_load(**context):
         if r.is_unprofitable:
             cur.execute("""
                 INSERT INTO alerts (alert_type, severity, subject_id, message)
-                VALUES ('UNPROFITABLE_VEHICLE', 'WARNING', %s, %s)
+                SELECT 'UNPROFITABLE_VEHICLE', 'WARNING', %s, %s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM alerts WHERE alert_type = 'UNPROFITABLE_VEHICLE'
+                      AND subject_id = %s AND resolved = false AND message LIKE %s
+                )
             """, (r.vehicle_id,
                   f"Vehicle {r.vehicle_id} is unprofitable on {business_date}: "
-                  f"net_profit={r.net_profit:.2f}"))
+                  f"net_profit={r.net_profit:.2f}", r.vehicle_id, f"%on {business_date}:%"))
+        else:
+            cur.execute("""UPDATE alerts SET resolved = true
+                           WHERE alert_type = 'UNPROFITABLE_VEHICLE' AND subject_id = %s
+                             AND resolved = false AND message LIKE %s""",
+                        (r.vehicle_id, f"%on {business_date}:%"))
 
     cur.execute("""
         INSERT INTO pipeline_heartbeat (component, last_heartbeat, events_processed_total)
@@ -170,8 +200,10 @@ def freshness_health_check(**context):
     cur = conn.cursor()
     if not files:
         cur.execute("""INSERT INTO alerts (alert_type, severity, subject_id, message)
-                        VALUES ('PIPELINE_STALE', 'CRITICAL', 'batch_producer',
-                                'No vehicle_costs files found at all')""")
+                        SELECT 'PIPELINE_STALE', 'CRITICAL', 'batch_producer',
+                               'No vehicle_costs files found at all'
+                        WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE alert_type='PIPELINE_STALE'
+                          AND subject_id='batch_producer' AND resolved=false)""")
         conn.commit()
         cur.close(); conn.close()
         return
@@ -179,10 +211,15 @@ def freshness_health_check(**context):
     age_seconds = datetime.now().timestamp() - latest_mtime
     if age_seconds > 2 * SIMULATED_DAY_SECONDS:
         cur.execute("""INSERT INTO alerts (alert_type, severity, subject_id, message)
-                        VALUES ('PIPELINE_STALE', 'CRITICAL', 'batch_producer', %s)""",
+                        SELECT 'PIPELINE_STALE', 'CRITICAL', 'batch_producer', %s
+                        WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE alert_type='PIPELINE_STALE'
+                          AND subject_id='batch_producer' AND resolved=false)""",
                     (f"No new daily cost file for {age_seconds:.0f}s "
                      f"(expected every {SIMULATED_DAY_SECONDS}s)",))
-        conn.commit()
+    else:
+        cur.execute("""UPDATE alerts SET resolved=true WHERE alert_type='PIPELINE_STALE'
+                       AND subject_id='batch_producer' AND resolved=false""")
+    conn.commit()
     cur.close()
     conn.close()
 
@@ -198,10 +235,9 @@ with DAG(
     tags=["batch-layer", "lambda-architecture", "fleet"],
 ) as dag:
 
-    wait_for_cost_file = FileSensor(
+    wait_for_cost_file = PythonSensor(
         task_id="wait_for_cost_file",
-        filepath=BATCH_INCOMING_DIR,
-        fs_conn_id="fs_default",
+        python_callable=recent_cost_file_available,
         poke_interval=15,
         timeout=SIMULATED_DAY_SECONDS * 2,
         mode="reschedule",

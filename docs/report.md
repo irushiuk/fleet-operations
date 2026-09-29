@@ -37,7 +37,7 @@ This decomposes into two distinct requirements with different latency needs:
 | Latency | Seconds–minutes | Once per business day |
 | Data source | Continuous stream | Once-daily file drop, externally controlled |
 | Reprocessing need | Low — recent windows only | Moderate — must re-derive trip aggregates from the log every time a day's costs land, and must be redoable if a corrected cost file arrives |
-| Consistency need | Approximate/eventual is fine | Needs to be exactly reconciled against the day's actual invoice figures |
+| Consistency need | Current vehicle snapshot plus recent event totals | Needs a fixed event interval paired with the day's simulated cost file; validate the join and sums |
 
 **Why Lambda fits better than Kappa here:**
 
@@ -98,7 +98,7 @@ separate.
 | Layer | Choice | Justification |
 |---|---|---|
 | Ingestion | Apache Kafka (KRaft) | Decouples the GPS producer from the streaming consumer; partitioned by `vehicle_id` for ordered per-vehicle processing; industry-standard for this data volume/shape |
-| Speed layer | Spark Structured Streaming | Native windowed aggregation (`groupBy(window(...))`) and watermarking for late data; `foreachBatch` lets one micro-batch write to both Postgres (metrics) and Parquet (archive) |
+| Speed layer | Spark Structured Streaming | Parses Kafka events and computes per-microbatch, one-minute labeled zone aggregates; `foreachBatch` writes Postgres metrics and Parquet archive. This code does not maintain cross-batch event-time window state. |
 | Batch layer | Apache Airflow | Explicit DAG dependencies (sensor → locate file → reconcile → alert) match the brief's requirement to "manage batch jobs"; independent freshness-check task demonstrates observability decoupled from job success |
 | Archive | Parquet on mounted volume (stands in for S3/HDFS) | Columnar format makes the daily `groupby` re-aggregation in the batch layer cheap; partitioned by date for efficient reads |
 | Serving store | PostgreSQL | Relational joins/upserts needed for `vehicle_current_state` and the merged profitability report; simple to query from FastAPI |

@@ -24,7 +24,7 @@ import sys
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import (StructType, StructField, StringType,
-                                DoubleType, TimestampType)
+                                DoubleType, BooleanType, TimestampType)
 
 sys.path.append("/app")
 from common.logging_utils import get_logger
@@ -50,6 +50,7 @@ EVENT_SCHEMA = StructType([
     StructField("speed", DoubleType(), True),
     StructField("status", StringType(), True),
     StructField("fare", DoubleType(), True),
+    StructField("trip_started", BooleanType(), True),
     StructField("timestamp", StringType(), True),
 ])
 
@@ -115,12 +116,12 @@ def upsert_vehicle_state(df, spark):
         FROM vehicle_current_state
         WHERE status = 'idle'
           AND status_since < now() - interval '%s minutes'
-          AND vehicle_id NOT IN (
-              SELECT subject_id FROM alerts
+          AND NOT EXISTS (
+              SELECT 1 FROM alerts
               WHERE alert_type = 'VEHICLE_IDLE' AND resolved = false
-                AND raised_at > now() - interval '%s minutes'
+                AND subject_id = vehicle_current_state.vehicle_id
           );
-    """ % (IDLE_ALERT_THRESHOLD_MIN, IDLE_ALERT_THRESHOLD_MIN, IDLE_ALERT_THRESHOLD_MIN))
+    """ % (IDLE_ALERT_THRESHOLD_MIN, IDLE_ALERT_THRESHOLD_MIN))
     conn.commit()
 
     # auto-resolve idle alerts for vehicles that are active again
@@ -167,7 +168,7 @@ def compute_zone_metrics(batch_df):
     )
 
     activity = tagged.groupBy("win", "zone").agg(
-        F.countDistinct(F.when(F.col("status") == "enroute", F.col("trip_id"))).alias("trips_started"),
+        F.sum(F.when(F.col("trip_started") == True, 1).otherwise(0)).alias("trips_started"),
         F.sum("fare").alias("total_earnings"),
         F.avg("speed").alias("avg_speed"),
     )

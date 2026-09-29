@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 
 import psycopg2
 import psycopg2.extras
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
@@ -94,6 +94,11 @@ def health():
         overall_ok = overall_ok and ok
         components[hb["component"]] = {"last_heartbeat": hb["last_heartbeat"].isoformat(),
                                         "age_seconds": round(age, 1), "fresh": ok}
+    for expected in ("spark_streaming_job", "airflow_daily_reconciliation"):
+        if expected not in components:
+            components[expected] = {"last_heartbeat": None, "age_seconds": None,
+                                    "fresh": False, "state": "not_reported"}
+            overall_ok = False
     return {"status": "ok" if overall_ok else "degraded", "components": components}
 
 
@@ -104,7 +109,7 @@ def metrics():
 
 @app.get("/api/v1/fleet/utilization")
 @timed("utilization")
-def fleet_utilization(minutes: int = 15):
+def fleet_utilization(minutes: int = Query(5, ge=1, le=60)):
     """Real-time fleet utilization per zone.
 
     * Vehicle counts (active / idle / enroute / on_trip, idle_ratio) are an exact
@@ -140,6 +145,7 @@ def fleet_utilization(minutes: int = 15):
     cur.close()
     conn.close()
 
+    simulated_hours = minutes * 60 / SIMULATED_DAY_SECONDS * 24
     zones = []
     for zone in sorted(set(snapshot) | set(activity)):
         snap = snapshot.get(zone, {})
@@ -156,7 +162,7 @@ def fleet_utilization(minutes: int = 15):
             "idle_ratio": round(idle / (active + idle), 3) if (active + idle) else 0.0,
             "earnings": round(float(act.get("earnings", 0.0)), 2),
             "trips_started": trips,
-            "trips_per_hour": round(trips * 60 / minutes, 1),
+            "trips_per_simulated_hour": round(trips / simulated_hours, 1),
         })
     fleet_active = sum(z["active_vehicles"] for z in zones)
     fleet_idle = sum(z["idle_vehicles"] for z in zones)
@@ -168,7 +174,8 @@ def fleet_utilization(minutes: int = 15):
         "earnings": round(sum(z["earnings"] for z in zones), 2),
     }
     log_with_fields(logger, "info", "utilization_queried", zones=len(zones), minutes=minutes)
-    return {"window_minutes": minutes, "fleet": fleet, "zones": zones}
+    return {"window_minutes": minutes, "simulated_days": round(simulated_hours / 24, 2),
+            "fleet": fleet, "zones": zones}
 
 
 @app.get("/api/v1/fleet/utilization/history")
@@ -218,7 +225,8 @@ def fleet_profitability(business_date: str | None = None):
                         WHERE business_date = %s ORDER BY net_profit ASC""", (business_date,))
     else:
         cur.execute("""SELECT * FROM vehicle_profitability_report
-                        WHERE business_date = (SELECT MAX(business_date) FROM vehicle_profitability_report)
+                        WHERE business_date = (SELECT business_date FROM vehicle_profitability_report
+                                               ORDER BY generated_at DESC LIMIT 1)
                         ORDER BY net_profit ASC""")
     rows = cur.fetchall()
     cur.close()
