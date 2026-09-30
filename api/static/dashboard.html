@@ -41,11 +41,11 @@
 <body><main>
   <header><div><p class="eyebrow">Fleet operations · simulated data</p><h1>Fleet overview</h1>
     <p class="subtitle">Live vehicle status and earnings, reconciled with fuel and maintenance costs. One simulated day equals five real minutes.</p></div>
-    <div class="updated" aria-live="polite"><strong><span class="dot"></span>Auto-refresh every 5 seconds</strong><span id="lastUpdated">Waiting for data</span></div></header>
+    <div class="updated" aria-live="polite"><strong><span class="dot"></span>Auto-refresh every 5 seconds</strong></div></header>
   <section class="summary" aria-label="Fleet summary">
     <div class="stat"><div class="stat-label">Active vehicles</div><div class="stat-value" id="statActive">—</div><div class="stat-note" id="statFleet">Current fleet snapshot</div></div>
     <div class="stat"><div class="stat-label">Idle vehicles</div><div class="stat-value" id="statIdle">—</div><div class="stat-note" id="statIdleRatio">Current fleet snapshot</div></div>
-    <div class="stat"><div class="stat-label">Earnings</div><div class="stat-value" id="statEarnings">—</div><div class="stat-note">Last simulated day</div></div>
+    <div class="stat"><div class="stat-label">Earnings</div><div class="stat-value" id="statEarnings">—</div><div class="stat-note">Last day</div></div>
     <div class="stat"><div class="stat-label">Unprofitable vehicles</div><div class="stat-value" id="statUnprofitable">—</div><div class="stat-note" id="statBusinessDate">Latest reconciliation</div></div>
   </section>
   <div class="layout"><div class="stack">
@@ -124,7 +124,6 @@
       if(jobs[i][0]==='health') { $('overallHealth').className='badge crit'; $('overallHealth').textContent='Unavailable'; }
       $(jobs[i][0]).innerHTML='<div class="empty error">Could not load this section. Retrying automatically.</div>';
     }});
-    $('lastUpdated').textContent=`Updated ${new Date().toLocaleTimeString()}`; refreshing=false;
   }
   refresh(); setInterval(refresh,5000);
 </script></body></html>
